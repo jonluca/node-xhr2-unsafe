@@ -20,7 +20,8 @@ task 'test', ->
       ssl_cert ->
         test_cases = glob.sync 'test/js/**/*_test.js'
         test_cases.sort()  # Consistent test case order.
-        run 'node_modules/.bin/mocha --colors --slow 200 --timeout 1000 ' +
+        # HTTP fixtures intentionally keep listening after the final test.
+        run 'node_modules/.bin/mocha --exit --colors --slow 200 --timeout 1000 ' +
             "--require test/js/helpers/setup.js #{test_cases.join(' ')}"
 
 task 'webtest', ->
@@ -50,9 +51,9 @@ build = (callback) ->
     a.replace(/\.coffee$/, '').localeCompare b.replace(/\.coffee$/, '')
 
   # Compile without --join for decent error messages.
-  commands.push 'node_modules/.bin/coffee --output tmp --compile ' +
+  commands.push 'node node_modules/coffeescript/bin/coffee --output tmp --compile ' +
                 source_files.join(' ')
-  commands.push 'node_modules/.bin/coffee --output lib --compile ' +
+  commands.push 'node node_modules/coffeescript/bin/coffee --output lib --compile ' +
                 "--join xhr2.js #{source_files.join(' ')}"
 
   # Tests are supposed to be independent, so the build order doesn't matter.
@@ -60,7 +61,7 @@ build = (callback) ->
   for test_dir in test_dirs
     out_dir = test_dir.replace(/^test\/src\//, 'test/js/')
     test_files = glob.sync path.join(test_dir, '*.coffee')
-    commands.push "node_modules/.bin/coffee --output #{out_dir} " +
+    commands.push "node node_modules/coffeescript/bin/coffee --output #{out_dir} " +
                   "--compile #{test_files.join(' ')}"
 
   async.forEachSeries commands, run, ->
@@ -121,7 +122,14 @@ run = (args...) ->
   cmd.stdout.on 'data', (data) -> process.stdout.write data
   cmd.stderr.on 'data', (data) -> process.stderr.write data
   process.on 'SIGHUP', -> cmd.kill()
-  cmd.on 'exit', (code) -> callback() if callback? and code is 0
+  cmd.on 'error', (error) ->
+    console.error error
+    process.exitCode = 1
+  cmd.on 'exit', (code) ->
+    if code is 0
+      callback() if callback?
+    else
+      process.exitCode = code or 1
 
 download = ([url, file], callback) ->
   if fs.existsSync file
